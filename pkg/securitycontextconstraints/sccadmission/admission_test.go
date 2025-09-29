@@ -31,6 +31,19 @@ import (
 	sccsort "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util/sort"
 )
 
+// testNodeLister is a simple implementation for testing that returns empty node list
+type testNodeLister struct{}
+
+func (f *testNodeLister) List(selector labels.Selector) ([]*corev1.Node, error) {
+	return []*corev1.Node{}, nil
+}
+
+func (f *testNodeLister) Get(name string) (*corev1.Node, error) {
+	return nil, fmt.Errorf("node %s not found", name)
+}
+
+var _ corev1listers.NodeLister = &testNodeLister{}
+
 // createSAForTest Build and Initializes a ServiceAccount for tests
 func createSAForTest() *corev1.ServiceAccount {
 	return &corev1.ServiceAccount{
@@ -59,6 +72,7 @@ func newTestAdmission(sccLister securityv1listers.SecurityContextConstraintsList
 	return &constraint{
 		Handler:         admission.NewHandler(admission.Create),
 		namespaceLister: nsLister,
+		nodeLister:      &testNodeLister{},
 		sccLister:       sccLister,
 		listersSynced:   []cache.InformerSynced{func() bool { return true }},
 		authorizer:      authorizer,
@@ -888,7 +902,7 @@ func TestCreateProvidersFromConstraints(t *testing.T) {
 			// let timeout based failures fail fast
 			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 			defer cancel()
-			_, errs := sccmatching.CreateProvidersFromConstraints(ctx, attributes.GetNamespace(), []*securityv1.SecurityContextConstraints{scc}, nsLister)
+			_, errs := sccmatching.CreateProvidersFromConstraints(ctx, attributes.GetNamespace(), []*securityv1.SecurityContextConstraints{scc}, nsLister, &testNodeLister{})
 
 			if !reflect.DeepEqual(scc, v.scc()) {
 				diff := diff.ObjectDiff(scc, v.scc())
@@ -1291,7 +1305,7 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 		},
 	}
 
-	mutatingProvider, err := sccmatching.NewSimpleProvider(mutatingSCC)
+	mutatingProvider, err := sccmatching.NewSimpleProvider(mutatingSCC, &testNodeLister{})
 	if err != nil {
 		t.Fatalf("failed to create a mutating provider: %v", err)
 	}

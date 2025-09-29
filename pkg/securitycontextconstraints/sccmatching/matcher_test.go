@@ -39,7 +39,7 @@ func TestAssignSecurityContext(t *testing.T) {
 			Type: securityv1.SupplementalGroupsStrategyRunAsAny,
 		},
 	}
-	provider, err := NewSimpleProvider(scc)
+	provider, err := NewSimpleProvider(scc, &fakeNodeLister{})
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
