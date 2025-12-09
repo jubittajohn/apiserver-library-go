@@ -106,6 +106,29 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidate_FieldPath(t *testing.T) {
+	strategy := NewMustMatchPatterns([]string{"safe.sysctl"}, nil, nil)
+	pod := &api.Pod{
+		Spec: api.PodSpec{
+			SecurityContext: &api.PodSecurityContext{
+				Sysctls: []api.Sysctl{
+					{Name: "unsafe.sysctl", Value: "1"},
+				},
+			},
+		},
+	}
+
+	errs := strategy.Validate(pod)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d", len(errs))
+	}
+
+	expectedField := "spec.securityContext.sysctls[0]"
+	if errs[0].Field != expectedField {
+		t.Errorf("expected field path %q, got %q", expectedField, errs[0].Field)
+	}
+}
+
 func TestGetSafeSysctlAllowlist(t *testing.T) {
 	var legacySafeSysctls = []string{
 		"kernel.shm_rmid_forced",
