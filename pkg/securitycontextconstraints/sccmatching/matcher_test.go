@@ -1,6 +1,7 @@
 package sccmatching
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -555,4 +556,138 @@ func hasRange(rng securityv1.IDRange, ranges []securityv1.IDRange) bool {
 		}
 	}
 	return false
+}
+
+// TestAssignSecurityContextErrorFieldPaths verifies that error messages from
+// AssignSecurityContext contain correct field paths. This is a regression test
+// to ensure that:
+//   - pod-level fields (hostUsers, hostNetwork, hostPID, hostIPC) use .spec.<field>
+//     paths rather than .spec.securityContext.<field>
+//   - flexVolume driver errors use .spec.volumes[].flexVolume.driver path
+func TestAssignSecurityContextErrorFieldPaths(t *testing.T) {
+	// Base SCC that denies host-level access.
+	baseSCC := func() *securityv1.SecurityContextConstraints {
+		return &securityv1.SecurityContextConstraints{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-scc",
+			},
+			SELinuxContext: securityv1.SELinuxContextStrategyOptions{
+				Type: securityv1.SELinuxStrategyRunAsAny,
+			},
+			RunAsUser: securityv1.RunAsUserStrategyOptions{
+				Type: securityv1.RunAsUserStrategyRunAsAny,
+			},
+			FSGroup: securityv1.FSGroupStrategyOptions{
+				Type: securityv1.FSGroupStrategyRunAsAny,
+			},
+			SupplementalGroups: securityv1.SupplementalGroupsStrategyOptions{
+				Type: securityv1.SupplementalGroupsStrategyRunAsAny,
+			},
+			AllowHostNetwork: false,
+			AllowHostPID:     false,
+			AllowHostIPC:     false,
+		}
+	}
+
+	basePod := func() *kapi.Pod {
+		return &kapi.Pod{
+			Spec: kapi.PodSpec{
+				SecurityContext: &kapi.PodSecurityContext{},
+			},
+		}
+	}
+
+	testCases := []struct {
+		name              string
+		scc               *securityv1.SecurityContextConstraints
+		pod               *kapi.Pod
+		expectedFieldPath string
+	}{
+		{
+			name: "hostNetwork error uses spec.hostNetwork path",
+			scc:  baseSCC(),
+			pod: func() *kapi.Pod {
+				p := basePod()
+				p.Spec.SecurityContext.HostNetwork = true
+				return p
+			}(),
+			expectedFieldPath: "spec.hostNetwork",
+		},
+		{
+			name: "hostPID error uses spec.hostPID path",
+			scc:  baseSCC(),
+			pod: func() *kapi.Pod {
+				p := basePod()
+				p.Spec.SecurityContext.HostPID = true
+				return p
+			}(),
+			expectedFieldPath: "spec.hostPID",
+		},
+		{
+			name: "hostIPC error uses spec.hostIPC path",
+			scc:  baseSCC(),
+			pod: func() *kapi.Pod {
+				p := basePod()
+				p.Spec.SecurityContext.HostIPC = true
+				return p
+			}(),
+			expectedFieldPath: "spec.hostIPC",
+		},
+		{
+			name: "hostUsers error uses spec.hostUsers path",
+			scc: func() *securityv1.SecurityContextConstraints {
+				s := baseSCC()
+				s.UserNamespaceLevel = securityv1.NamespaceLevelRequirePod
+				return s
+			}(),
+			pod:               basePod(), // hostUsers is nil, which fails RequirePod
+			expectedFieldPath: "spec.hostUsers",
+		},
+		{
+			name: "flexVolume driver error uses spec.volumes[].flexVolume.driver path",
+			scc: func() *securityv1.SecurityContextConstraints {
+				s := baseSCC()
+				s.Volumes = []securityv1.FSType{securityv1.FSTypeFlexVolume}
+				s.AllowedFlexVolumes = []securityv1.AllowedFlexVolume{
+					{Driver: "example/allowed"},
+				}
+				return s
+			}(),
+			pod: func() *kapi.Pod {
+				p := basePod()
+				p.Spec.Volumes = []kapi.Volume{
+					{
+						Name: "flex",
+						VolumeSource: kapi.VolumeSource{
+							FlexVolume: &kapi.FlexVolumeSource{
+								Driver: "example/notallowed",
+							},
+						},
+					},
+				}
+				return p
+			}(),
+			expectedFieldPath: "spec.volumes[0].flexVolume.driver",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			provider, err := NewSimpleProvider(tc.scc)
+			if err != nil {
+				t.Fatalf("Failed to create provider: %v", err)
+			}
+
+			errs := AssignSecurityContext(provider, tc.pod, nil)
+			if len(errs) == 0 {
+				t.Fatal("Expected validation errors but got none")
+			}
+
+			errString := errs.ToAggregate().Error()
+
+			if !strings.Contains(errString, tc.expectedFieldPath) {
+				t.Errorf("Expected error to contain field path %q, got: %s", tc.expectedFieldPath, errString)
+			}
+		})
+	}
 }
