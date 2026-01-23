@@ -253,6 +253,24 @@ func TestValidatePod(t *testing.T) {
 	}
 }
 
+func TestValidatePod_FieldPath(t *testing.T) {
+	strategy := NewSeccompStrategy([]string{"foo"})
+	pod := &api.Pod{}
+	pod.Annotations = map[string]string{
+		api.SeccompPodAnnotationKey: "bar",
+	}
+
+	errs := strategy.ValidatePod(pod)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d", len(errs))
+	}
+
+	expectedField := "metadata.annotations[seccomp.security.alpha.kubernetes.io/pod]"
+	if errs[0].Field != expectedField {
+		t.Errorf("expected field path %q, got %q", expectedField, errs[0].Field)
+	}
+}
+
 func TestValidateContainer(t *testing.T) {
 	newPod := func(annotationProfile string, fieldProfile *api.SeccompProfile) *api.Pod {
 		pod := &api.Pod{
@@ -365,6 +383,28 @@ func TestValidateContainer(t *testing.T) {
 				t.Errorf("%s expected error to contain %q but it did not: %v", name, tc.expectedMsg, errs)
 			}
 		}
+	}
+}
+
+func TestValidateContainer_FieldPath(t *testing.T) {
+	strategy := NewSeccompStrategy([]string{"foo"})
+	pod := &api.Pod{
+		Spec: api.PodSpec{
+			Containers: []api.Container{{Name: "test"}},
+		},
+	}
+	pod.Annotations = map[string]string{
+		api.SeccompContainerAnnotationKeyPrefix + "test": "bar",
+	}
+
+	errs := strategy.ValidateContainer(pod, &pod.Spec.Containers[0])
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d", len(errs))
+	}
+
+	expectedField := "metadata.annotations[container.seccomp.security.alpha.kubernetes.io/test]"
+	if errs[0].Field != expectedField {
+		t.Errorf("expected field path %q, got %q", expectedField, errs[0].Field)
 	}
 }
 
