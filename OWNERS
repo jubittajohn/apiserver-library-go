@@ -1,8 +1,4 @@
 reviewers:
-  - bertinatto
-  - deads2k
-  - soltysh
+  - control-plane-approvers
 approvers:
-  - bertinatto
-  - deads2k
-  - soltysh
+  - control-plane-approvers
